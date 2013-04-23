@@ -320,9 +320,31 @@ static ssize_t msm_fb_msm_fb_type(struct device *dev,
 	return ret;
 }
 
+//tracy 201310118 create for update lcm moulde id++
+static ssize_t msm_fb_lcm_module_id(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	ssize_t ret = 0;
+	
+	if(gpio_get_value(35))
+		ret = snprintf(buf, PAGE_SIZE, "Tianma\n");
+	else
+		ret = snprintf(buf, PAGE_SIZE, "Truly\n");
+	
+	return ret;
+}
+//tracy 201310118 create for update lcm moulde id--
+
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, msm_fb_msm_fb_type, NULL);
+//tracy 201310118 create for update lcm moulde id++
+static DEVICE_ATTR(lcm_module_id, S_IRUGO, msm_fb_lcm_module_id, NULL);
+//tracy 201310118 create for update lcm moulde id--
+
 static struct attribute *msm_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
+//tracy 201310118 create for update lcm moulde id++
+	&dev_attr_lcm_module_id.attr,	
+//tracy 201310118 create for update lcm moulde id--
 	NULL,
 };
 static struct attribute_group msm_fb_attr_group = {

@@ -154,8 +154,32 @@ static void mipi_dsi_pclk_ctrl(struct dsi_clk_desc *clk, int clk_en)
 
 static void mipi_dsi_calibration(void)
 {
-	MIPI_OUTP(MIPI_DSI_BASE + 0xf8, 0x00a105a1); /* cal_hw_ctrl */
+//tracy add Qualcomm patch for fix LCM sharking++
+	MIPI_OUTP(MIPI_DSI_BASE + 0x100, 0x67); /* cal_hw_ctrl */
+//tracy add Qualcomm patch for fix LCM sharking--
+
 }
+//tracy add Qualcomm patch for fix LCM sharking++
+
+void mipi_dsi_phy_rdy_poll(void)
+{
+	uint32 phy_pll_busy;
+	uint32 i = 0;
+	uint32 term_cnt = 0xFFFFFF;
+
+	phy_pll_busy = MIPI_INP(MIPI_DSI_BASE + 0x2fc);
+	while (!(phy_pll_busy & 0x1)) {
+		i++;
+		if (i > term_cnt) {
+			pr_err("DSI1 PHY NOT READY, exceeded polling TIMEOUT!\n");
+			break;
+		}
+		phy_pll_busy = MIPI_INP(MIPI_DSI_BASE + 0x2fc);
+	}
+	if (i > 0)
+		pr_err("DSI1 PHY READY after %x polls!\n", i);
+}
+//tracy add Qualcomm patch for fix LCM sharking--
 
 #define PREF_DIV_RATIO 19
 struct dsiphy_pll_divider_config pll_divider_config;
@@ -261,6 +285,8 @@ void mipi_dsi_phy_init(int panel_ndx, struct msm_panel_info const *panel_info,
 	MIPI_OUTP(MIPI_DSI_BASE + 0x128, 0x0000);/* end phy w reset */
 	wmb();
 	usleep(1000);
+//tracy add Qualcomm patch for fix LCM sharking++
+	#if 0
 	MIPI_OUTP(MIPI_DSI_BASE + 0x2cc, 0x0003);/* regulator_ctrl_0 */
 	MIPI_OUTP(MIPI_DSI_BASE + 0x2d0, 0x0001);/* regulator_ctrl_1 */
 	MIPI_OUTP(MIPI_DSI_BASE + 0x2d4, 0x0001);/* regulator_ctrl_2 */
@@ -268,6 +294,8 @@ void mipi_dsi_phy_init(int panel_ndx, struct msm_panel_info const *panel_info,
 #ifdef DSI_POWER
 	MIPI_OUTP(MIPI_DSI_BASE + 0x2dc, 0x0100);/* regulator_ctrl_4 */
 #endif
+#endif
+//tracy add Qualcomm patch for fix LCM sharking--
 
 	pd = (panel_info->mipi).dsi_phy_db;
 
@@ -302,13 +330,15 @@ void mipi_dsi_phy_init(int panel_ndx, struct msm_panel_info const *panel_info,
 	mipi_dsi_calibration();
 
 	off = 0x0204;	/* pll ctrl 1, skip 0 */
-	for (i = 1; i < 21; i++) {
+//tracy add Qualcomm patch for fix LCM sharking++
+	for (i = 1; i < 20; i++) {
 		MIPI_OUTP(MIPI_DSI_BASE + off, pd->pll[i]);
 		wmb();
 		off += 4;
 	}
 
-	MIPI_OUTP(MIPI_DSI_BASE + 0x100, 0x67);
+	//MIPI_OUTP(MIPI_DSI_BASE + 0x100, 0x67);
+//tracy add Qualcomm patch for fix LCM sharking--
 
 	/* pll ctrl 0 */
 	MIPI_OUTP(MIPI_DSI_BASE + 0x0200, pd->pll[0]);
@@ -403,6 +433,9 @@ void mipi_dsi_clk_enable(void)
 	pll_ctrl = MIPI_INP(MIPI_DSI_BASE + 0x0200);
 	MIPI_OUTP(MIPI_DSI_BASE + 0x0200, pll_ctrl | 0x01);
 	mb();
+//tracy add Qualcomm patch for fix LCM sharking++
+	mipi_dsi_phy_rdy_poll();
+//tracy add Qualcomm patch for fix LCM sharking--
 
 	clk_set_rate(dsi_byte_div_clk, data);
 	clk_set_rate(dsi_esc_clk, data);
@@ -472,6 +505,11 @@ void mipi_dsi_phy_ctrl(int on)
 
 		/* disable dsi clk */
 		MIPI_OUTP(MIPI_DSI_BASE + 0x0118, 0);
+//tracy add Qualcomm patch for fix LCM sharking++
+		/* disable PHY PLL */
+		MIPI_OUTP(MIPI_DSI_BASE + 0x0200, 0);
+		mb();
+//tracy add Qualcomm patch for fix LCM sharking--
 	}
 }
 

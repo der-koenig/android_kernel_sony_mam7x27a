@@ -40,6 +40,31 @@ static struct msm_camera_i2c_reg_conf s5k5ca_groupoff_settings[] = {
 };
 
 #endif
+//++ petershih -20130225 - tmp add ++
+static struct msm_camera_i2c_reg_conf s5k5ca_pre_capture_settings[] = {
+	{0xFCFC, 0xD000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0028, 0x7000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	
+	{0x002A, 0x0240 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x002A, 0x0220 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0001 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+};
+#if 0
+static struct msm_camera_i2c_reg_conf s5k5ca_pre_preview_settings[] = {
+	{0xFCFC, 0xD000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0028, 0x7000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x002A, 0x0224 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0000 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0001 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	
+	{0x002A, 0x0244 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0003 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+	{0x0F12, 0x0001 , MSM_CAMERA_I2C_WORD_DATA ,MSM_CAMERA_I2C_CMD_WRITE ,0}, 
+};
+#endif
+//-- petershih -20130225 - tmp add --
 static struct msm_camera_i2c_reg_conf s5k5ca_prev_settings[] = {
 
 	//$MIPI[Width:1024,Height:768,Format:YUV422,Lane:1,ErrorCheck:0,PolarityData:0,PolarityClock:0,Buffer:2,DataRate:928] 
@@ -513,7 +538,7 @@ static struct msm_camera_i2c_conf_array s5k5ca_init_conf_1[] = {
 };
 static struct msm_camera_i2c_conf_array s5k5ca_confs[] = {
 	{&s5k5ca_snap_settings[0],ARRAY_SIZE(s5k5ca_snap_settings), 300, MSM_CAMERA_I2C_WORD_DATA},
-	{&s5k5ca_prev_settings[0],ARRAY_SIZE(s5k5ca_prev_settings), 0, MSM_CAMERA_I2C_WORD_DATA},
+	{&s5k5ca_prev_settings[0],ARRAY_SIZE(s5k5ca_prev_settings), 100, MSM_CAMERA_I2C_WORD_DATA},
 };
 //Night mode setting in capture
 static struct msm_camera_i2c_conf_array s5k5ca_confs_night_mode[] = {
@@ -596,7 +621,7 @@ int s5k5ca_msm_sensor_s_ctrl_by_enum(struct msm_sensor_ctrl_t *s_ctrl,
 {
 	int rc = 0;
 
-	//printk(" s5k5ca_msm_sensor_s_ctrl_by_enum() ctrl_id:%x value:%d\n",ctrl_info->ctrl_id,value);
+	printk(" s5k5ca_msm_sensor_s_ctrl_by_enum() ctrl_id:%x value:%d\n",ctrl_info->ctrl_id,value);
 
 	switch(ctrl_info->ctrl_id){
 		case V4L2_CID_SPECIAL_EFFECT:
@@ -628,9 +653,9 @@ int s5k5ca_msm_sensor_s_ctrl_by_enum(struct msm_sensor_ctrl_t *s_ctrl,
 		}
 		break;
 		case MSM_V4L2_PID_BEST_SHOT:
-				{
-night_mode_flag=value;
- switch(value){
+		{
+			night_mode_flag=value;
+			switch(value){
  	                     case msm_v4l2_best_shot_normal:
 				value=0;
 				break;
@@ -932,6 +957,10 @@ int32_t s5k5ca_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 	gpio_direction_output(info->sensor_reset, 0);
 	usleep_range(5000, 5100);
 	msm_sensor_power_down(s_ctrl);
+	gpio_free(info->sensor_pwd);
+	gpio_free(info->sensor_reset);
+	gpio_free(10);
+	gpio_free(14);
 	return 0;
 }
 static struct msm_cam_clk_info cam_clk_info[] = {
@@ -987,15 +1016,17 @@ int32_t s5k5ca_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 	gpio_direction_output(info->sensor_reset, 1);
 
 	rc=msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0xFCFC, 0xD000, MSM_CAMERA_I2C_WORD_DATA);
-	rc=msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x002C, 0x0000, MSM_CAMERA_I2C_WORD_DATA);
-	rc=msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x002E, 0x0040, MSM_CAMERA_I2C_WORD_DATA);
+	rc|=msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x002C, 0x0000, MSM_CAMERA_I2C_WORD_DATA);
+	rc|=msm_camera_i2c_write(s_ctrl->sensor_i2c_client, 0x002E, 0x0040, MSM_CAMERA_I2C_WORD_DATA);
+	if (rc < 0)
+		pr_err("%s: rc:%d iic failed!",	__func__,rc);
 	//detect sensor//
 	camera_id=gpio_get_value(13);
 	//Flea++
 	s_ctrl->sensordata->sensor_platform_info->hw_version=10|camera_id;
 	//Flea--
 	
-	//pr_emerg(" s5k5ca_sensor_power_up() camera_id:%d",camera_id);
+	//pr_emerg(" s5k5ca_sensor_power_up() rc:%d camera_id:%d",rc,camera_id);
 	 
 	//
 	return rc;
@@ -1031,6 +1062,32 @@ int32_t s5k5ca_sensor_setting(struct msm_sensor_ctrl_t *s_ctrl,
 			printk("s5k5ca_sensor_setting()rc:%d",rc);
 	} else if (update_type == MSM_SENSOR_UPDATE_PERIODIC) {
 		//CDBG("PERIODIC : %d\n", res);
+//++ petershih -20130225 - tmp add ++
+		if(res == 0)
+		{
+		   	rc=msm_camera_i2c_write_tbl(
+				s5k5ca_s_ctrl.sensor_i2c_client,
+				s5k5ca_pre_capture_settings,
+				ARRAY_SIZE(s5k5ca_pre_capture_settings),
+				s5k5ca_s_ctrl.msm_sensor_reg->default_data_type);   
+			if( rc!=0 )
+				printk("s5k5ca_sensor_setting()s5k5ca_pre_capture_settings rc:%d",rc);
+			msleep(140);
+		}
+#if 0
+		else
+		{
+		   	rc=msm_camera_i2c_write_tbl(
+				s5k5ca_s_ctrl.sensor_i2c_client,
+				s5k5ca_pre_preview_settings,
+				ARRAY_SIZE(s5k5ca_pre_preview_settings),
+				s5k5ca_s_ctrl.msm_sensor_reg->default_data_type);   
+			if( rc!=0 )
+				printk("s5k5ca_sensor_setting()s5k5ca_pre_preview_settings rc:%d",rc);
+			msleep(140);
+		}
+#endif
+//-- petershih -20130225 - tmp add --
 		if((res==0) &&(night_mode_flag==msm_v4l2_best_shot_night))
 			{
 		rc=msm_sensor_write_conf_array(

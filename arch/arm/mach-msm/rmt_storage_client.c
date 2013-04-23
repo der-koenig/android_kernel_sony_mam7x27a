@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2012, Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2013, Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,6 +21,9 @@
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
+// << FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+#include <linux/proc_fs.h>
+// >> FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
 #include <linux/err.h>
 #include <linux/sched.h>
 #include <linux/wakelock.h>
@@ -122,6 +125,12 @@ static struct rmt_storage_client_info *rmc;
 /* Integrate CRs-Fixed: 419695 , 20121219 */
 struct rmt_storage_srv *rmt_srv;
 /* Integrate CRs-Fixed: 419695 , 20121219 */
+
+// << FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+#define PROCFS_NAME "rmt_reset"
+static struct proc_dir_entry *proc_rmt_reset;
+static uint32_t rmt_reset;
+// >> FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
 
 #ifdef CONFIG_MSM_SDIO_SMEM
 DECLARE_DELAYED_WORK(sdio_smem_work, rmt_storage_sdio_smem_work);
@@ -1361,16 +1370,42 @@ show_sync_sts(struct device *dev, struct device_attribute *attr, char *buf)
  * Usually RMT storage sync is not taking more than 2 seconds
  * for encryption and sync.
  */
+
+/* Integrate CRs-Fixed: 435986 , 20121219 */
+#define MAX_GET_SYNC_STATUS_TRIES 200
+#define RMT_SLEEP_INTERVAL_MS 20
+/* Integrate CRs-Fixed: 435986 , 20121219 */
 static int rmt_storage_reboot_call(
 	struct notifier_block *this, unsigned long code, void *cmd)
 {
 	int ret, count = 0;
 
+	// << FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+	if (rmt_reset == 1)
+		return NOTIFY_DONE;
+	// >> FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+
+/* Integrate CRs-Fixed: 434098 , 20130315 */
+	/*
+	 * In recovery mode RMT daemon is not available,
+	 * so return from reboot notifier without initiating
+	 * force sync.
+	 */
+	spin_lock(&rmc->lock);
+	if (!rmc->open_excl) {
+		spin_unlock(&rmc->lock);
+		msm_rpc_unregister_client(rmt_srv->rpc_client);
+		return NOTIFY_DONE;
+	}
+
+	spin_unlock(&rmc->lock);
+/* Integrate CRs-Fixed: 434098 , 20130315 */
+
 	switch (code) {
 	case SYS_RESTART:
 	case SYS_HALT:
 	case SYS_POWER_OFF:
-		pr_info("%s: Force RMT storage final sync...\n", __func__);
+		pr_info("%s: Sending force-sync RPC request\n", __func__);
 		ret = rmt_storage_force_sync(rmt_srv->rpc_client);
 		if (ret) {
 			pr_err("%s: RMT force sync failed.\n", __func__);
@@ -1379,16 +1414,35 @@ static int rmt_storage_reboot_call(
 
 		do {
 			count++;
-			msleep(20);
+			msleep(RMT_SLEEP_INTERVAL_MS);                           /* Integrate CRs-Fixed: 435986 , 20121219 */
 			ret = rmt_storage_get_sync_status(rmt_srv->rpc_client);
-		} while (ret != 1 && count < 200);
+		} while (ret != 1 && count < MAX_GET_SYNC_STATUS_TRIES);   /* Integrate CRs-Fixed: 435986 , 20121219 */
 
 		if (ret == 1)
-			pr_info("%s: RMT storage sync successful.\n", __func__);
+			pr_info("%s: Final-sync successful\n", __func__);
 		else
-			pr_err("%s: RMT storage sync failed.\n", __func__);
+			pr_err("%s: Final-sync failed\n", __func__);
 
-		pr_info("%s: Un register RMT storage client.\n", __func__);
+/* Integrate CRs-Fixed: 435986 , 20121219 */
+		/*
+		 * Check if any ongoing efs_sync triggered just before force
+		 * sync is pending. If so, wait for 4sec for completing efs_sync
+		 * before unregistring client.
+		 */
+		count = 0;
+		while (count < MAX_GET_SYNC_STATUS_TRIES) {
+			if (atomic_read(&rmc->wcount) == 0) {
+				break;
+			} else {
+				count++;
+				msleep(RMT_SLEEP_INTERVAL_MS);
+			}
+		}
+		if (atomic_read(&rmc->wcount))
+			pr_err("%s: Efs_sync still incomplete\n", __func__);
+/* Integrate CRs-Fixed: 435986 , 20121219 */
+ 
+		pr_info("%s: Un-register RMT storage client\n", __func__);
 		msm_rpc_unregister_client(rmt_srv->rpc_client);
 		break;
 
@@ -1399,8 +1453,11 @@ static int rmt_storage_reboot_call(
 }
 
 /*
- * Giving max priority RMT storage reboot notifier,
- * as RPC is needed to complete RMT storage force sync.
+ * For the RMT storage sync, RPC channels are required. If we do not
+ * give max priority to RMT storage reboot notifier, RPC channels may get
+ * closed before RMT storage sync completed if RPC reboot notifier gets
+ * executed before this remotefs reboot notifier. Hence give the maximum
+ * priority to this reboot notifier.
  */
 static struct notifier_block rmt_storage_reboot_notifier = {
 	.notifier_call = rmt_storage_reboot_call,
@@ -1729,6 +1786,29 @@ static uint32_t rmt_storage_get_sid(const char *path)
 	return 0;
 }
 
+// << FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+/** 
+ * This function is called then the /proc file is read
+ *
+ */
+static int proc_rmt_reset_read(char *buffer, char **buffer_location,
+                         off_t offset, int buffer_length, int *eof, void *data)
+{
+        sprintf(buffer, "%d", rmt_reset);
+	return 1;
+}
+
+/**
+ * This function is called with the /proc file is written
+ *
+ */
+static int proc_rmt_reset_write(struct file *file, const char *buffer, unsigned long count, void *data)
+{
+	sscanf(buffer, "%d", &rmt_reset);
+	return 1;
+}
+// >> FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+
 static int __init rmt_storage_init(void)
 {
 #ifdef CONFIG_MSM_SDIO_SMEM
@@ -1793,6 +1873,25 @@ static int __init rmt_storage_init(void)
 	if (!stats_dentry)
 		pr_err("%s: Failed to create stats debugfs file\n", __func__);
 #endif
+
+	// << FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+	/* create the /proc file */
+	rmt_reset = 0;
+	proc_rmt_reset = create_proc_entry(PROCFS_NAME, 0666, NULL);
+
+	if (proc_rmt_reset == NULL) {
+		remove_proc_entry(PROCFS_NAME, NULL);
+		printk(KERN_ALERT "Error: Could not initialize /proc/%s\n", PROCFS_NAME);
+		return -ENOMEM;
+	}
+
+	proc_rmt_reset->read_proc  = proc_rmt_reset_read;
+	proc_rmt_reset->write_proc = proc_rmt_reset_write;
+	proc_rmt_reset->mode       = S_IFREG | S_IRUGO | S_IWUGO;
+
+	printk(KERN_INFO "/proc/%s created\n", PROCFS_NAME);
+	// >> FerryWu, 2013/03/05, fix "NV items cannot be reset by factory reset" issue
+
 	return 0;
 
 #ifdef CONFIG_MSM_SDIO_SMEM

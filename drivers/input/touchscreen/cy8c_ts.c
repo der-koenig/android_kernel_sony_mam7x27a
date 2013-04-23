@@ -407,7 +407,7 @@ static int cy8c_ts_calibration(struct i2c_client *client)
 		  return rc;
 		 }
 	   
-	   cy8c_ts_write_reg_u8(client, 0x02, 0x20);
+	   rc = cy8c_ts_write_reg_u8(client, 0x02, 0x20);
 	   
 	   if(rc < 0){
 		  dev_err(&client->dev, "cy8c_ts_calibration : i2c sanity check failed\n");
@@ -496,12 +496,16 @@ static ssize_t cypress_fops_write(struct file *filp, const char *buff,    size_t
 
 static ssize_t cypress_fops_read(struct file *filp, char *buff, size_t count, loff_t *offp)
 {    
-     int ret;
+     int ret=0;
 
      printk("[Cypress]cypress_fops_read : count : %d\n",count);
   
-     cy8c_ts_read(cypress_ts->client, 0x07, buff, count);
-	 
+     ret = cy8c_ts_read(cypress_ts->client, 0x07, buff, count);
+      if(ret < 0){
+	    printk("cypress_fops_read i2c sanity check failed\n");
+	     return ret;
+     	}
+	  
      ret = ((cy8c_ts_read_reg_u8(cypress_ts->client,0x01)&0x40) >> 6);
 		
      return ret;
@@ -780,7 +784,7 @@ static void cy8c_ts_xy_worker(struct work_struct *work)
 #endif /*CYPRESS_AUTO_FW_UPDATE*/		
 #endif
       {
-          u8 device_mode;
+          u8 device_mode=0;
           device_mode = cy8c_ts_read_reg_u8(ts->client, 0x01);	  
 
           if(device_mode < 0){
@@ -1099,8 +1103,8 @@ err_gpio_free:
 err_power_off:
 	if (ts->pdata->power_on)
 		rc = ts->pdata->power_on(0);
-#endif	
 	return rc;
+#endif	
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -1243,7 +1247,11 @@ static int __devinit cy8c_ts_probe(struct i2c_client *client,
 config_irq_gpio:
 	/* configure touchscreen interrupt gpio */
 #ifdef CONFIG_TOUCHSCREEN_CYPRESS_CY8CTMA340
-	gpio_tlmm_config(GPIO_CFG(ts->pdata->irq_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);  
+	rc = gpio_tlmm_config(GPIO_CFG(ts->pdata->irq_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);  
+	if (rc) {
+		pr_err("%s: unable to config gpio %d\n",
+			__func__, ts->pdata->irq_gpio);
+	}
 #endif
 	rc = gpio_request(ts->pdata->irq_gpio, "cy8c_irq_gpio");
 	if (rc) {

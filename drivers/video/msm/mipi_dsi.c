@@ -35,6 +35,10 @@
 #include "mdp.h"
 #include "mdp4.h"
 
+//tracy add Qualcomm patch for fix LCM sharking++
+/* check pll unlock status */
+#define PLL_UNLOCK_CHECK
+//tracy add Qualcomm patch for fix LCM sharking--
 u32 dsi_irq;
 u32 esc_byte_ratio;
 
@@ -133,6 +137,118 @@ static int mipi_dsi_off(struct platform_device *pdev)
 
 	return ret;
 }
+//tracy add Qualcomm patch for fix LCM sharking++
+
+#ifdef PLL_UNLOCK_CHECK
+#define RESET_COUNT 0xF
+static int mipi_dsi_on_internal(struct msm_fb_data_type *mfd)
+{
+        int ret = 0;
+        struct fb_info *fbi;
+        struct fb_var_screeninfo *var;
+        struct mipi_panel_info *mipi;
+        u32 hbp, hfp, vbp, vfp, hspw, vspw, width, height, ystride, bpp, data;
+        u32 dummy_xres, dummy_yres;
+        int target_type = 0;
+        fbi = mfd->fbi;
+        var = &fbi->var;
+
+        mipi_dsi_prepare_clocks();
+        mipi_dsi_ahb_ctrl(1);
+        mipi_dsi_phy_ctrl(1);
+        mipi_dsi_phy_init(0, &(mfd->panel_info), target_type);
+        mipi_dsi_clk_enable();
+
+        MIPI_OUTP(MIPI_DSI_BASE + 0x114, 1);
+        MIPI_OUTP(MIPI_DSI_BASE + 0x114, 0);
+
+        hbp = var->left_margin;
+        hfp = var->right_margin;
+        vbp = var->upper_margin;
+        vfp = var->lower_margin;
+        hspw = var->hsync_len;
+        vspw = var->vsync_len;
+        width = mfd->panel_info.xres;
+        height = mfd->panel_info.yres;
+        mipi  = &mfd->panel_info.mipi;
+	if (mfd->panel_info.type == MIPI_VIDEO_PANEL) 
+	{	
+        dummy_xres = mfd->panel_info.lcdc.xres_pad;
+        dummy_yres = mfd->panel_info.lcdc.yres_pad;
+
+        /* DSI_LAN_SWAP_CTRL */
+        MIPI_OUTP(MIPI_DSI_BASE + 0x00ac, mipi->dlane_swap);
+        MIPI_OUTP(MIPI_DSI_BASE + 0x20,
+                        ((hbp + width + dummy_xres) << 16 | (hbp)));
+        MIPI_OUTP(MIPI_DSI_BASE + 0x24,
+                        ((vbp + height + dummy_yres) << 16 | (vbp)));
+        MIPI_OUTP(MIPI_DSI_BASE + 0x28,
+                        (vbp + height + dummy_yres + vfp) << 16 |
+                        (hbp + width + dummy_xres + hfp));
+
+        MIPI_OUTP(MIPI_DSI_BASE + 0x2c, (hspw << 16));
+        MIPI_OUTP(MIPI_DSI_BASE + 0x30, 0);
+        MIPI_OUTP(MIPI_DSI_BASE + 0x34, (vspw << 16));
+	}
+	else
+		{
+		if (mipi->dst_format == DSI_CMD_DST_FORMAT_RGB888)
+		bpp = 3;
+	else if (mipi->dst_format == DSI_CMD_DST_FORMAT_RGB666)
+		bpp = 3;
+	else if (mipi->dst_format == DSI_CMD_DST_FORMAT_RGB565)
+		bpp = 2;
+	else
+		bpp = 3;	/* Default format set to RGB888 */
+
+	ystride = width * bpp + 1;
+
+	/* DSI_COMMAND_MODE_MDP_STREAM_CTRL */
+	data = (ystride << 16) | (mipi->vc << 8) | DTYPE_DCS_LWRITE;
+	MIPI_OUTP(MIPI_DSI_BASE + 0x5c, data);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x54, data);
+
+	/* DSI_COMMAND_MODE_MDP_STREAM_TOTAL */
+	data = height << 16 | width;
+	MIPI_OUTP(MIPI_DSI_BASE + 0x60, data);
+	MIPI_OUTP(MIPI_DSI_BASE + 0x58, data);
+		}
+        mipi_dsi_host_init(mipi);
+        mipi_dsi_op_mode_config(mipi->mode);
+
+        return ret;
+}
+
+static int mipi_dsi_off_internal(struct msm_fb_data_type *mfd)
+{
+        int ret = 0;
+
+        mipi_dsi_controller_cfg(0);
+        mipi_dsi_clk_disable();
+
+        MIPI_OUTP(MIPI_DSI_BASE + 0x0000, 0);
+
+        mipi_dsi_phy_ctrl(0);
+        mipi_dsi_ahb_ctrl(0);
+        mipi_dsi_unprepare_clocks();
+
+        return ret;
+}
+
+static void pll_unlock_reset(struct msm_fb_data_type *mfd)
+{
+        printk("%s\n", __func__);
+
+        /* stop DSI PLL */
+        mipi_dsi_off_internal(mfd);
+
+        /* restart DSI PLL */
+        mipi_dsi_on_internal(mfd);
+
+        return;
+}
+#endif
+//tracy add Qualcomm patch for fix LCM sharking--
 
 static int mipi_dsi_on(struct platform_device *pdev)
 {
@@ -147,6 +263,12 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	u32 ystride, bpp, data;
 	u32 dummy_xres, dummy_yres;
 	int target_type = 0;
+//tracy add Qualcomm patch for fix LCM sharking++
+	#ifdef PLL_UNLOCK_CHECK
+        int val;
+        int reset_times = 0;
+	#endif
+//tracy add Qualcomm patch for fix LCM sharking--
 
 	mfd = platform_get_drvdata(pdev);
 	fbi = mfd->fbi;
@@ -321,6 +443,22 @@ static int mipi_dsi_on(struct platform_device *pdev)
 		mutex_unlock(&mfd->dma->ov_mutex);
 	else
 		up(&mfd->dma->mutex);
+//tracy add Qualcomm patch for fix LCM sharking++
+
+	#ifdef PLL_UNLOCK_CHECK
+        /* check pll unlock */
+        while ((MIPI_INP(mipi_dsi_base + 0x11c) & 0x10000) && reset_times < RESET_COUNT) {
+                printk("%s: pll unlock, reset %d times\n", __func__, reset_times);
+                /* clear dsi unlock bit */
+                val = MIPI_INP(MIPI_DSI_BASE + 0x11c);
+                MIPI_OUTP(MIPI_DSI_BASE + 0x11c, val & 0x01111);
+
+                pll_unlock_reset(mfd);
+                mdelay(300);
+                reset_times++;
+        }
+#endif
+//tracy add Qualcomm patch for fix LCM sharking--
 
 	pr_debug("%s-:\n", __func__);
 
